@@ -513,6 +513,13 @@ Text style (on containers; full story in §5):
 | `AmendTextStyle(mods...)` | parent text style + mods → this container's style |
 | `SetTextStyle(base, mods...)` | fresh base + mods (does not inherit parent style) |
 
+Lines (not attributes: calls inside a container's body, in its own coordinates):
+
+| call | meaning |
+|---|---|
+| `Line(p0, p1, width, color)` | anti-aliased line segment (round caps), points relative to the container's top-left like `Float` |
+| `Polyline(points, width, color)` | `Line` through consecutive points; see the translucent-overlap note in §14 |
+
 Behavior:
 
 | attr | meaning |
@@ -1369,6 +1376,39 @@ Container(Attrs(Row, FixHeight(chartHeight), Gap(1)), func() {
 
 (Note the `NoAnimate` — per §7, hand-shaped data visualizations should not
 interpolate.)
+
+### Line charts
+
+For a line chart, give the plot container a size and draw the series with
+`Polyline` (or `Line`) inside it. Points are in logical points relative to the
+container's top-left corner, the same space `Float` uses, and lines are
+anti-aliased on every backend:
+
+```go
+Container(Attrs(FixSize(width, height), Clip, NoAnimate), func() {
+    for _, y := range gridRows {
+        Line(Vec2{0, y}, Vec2{width, y}, 1, gridColor) // gridlines first: later calls paint over earlier ones
+    }
+    pts := make([]Vec2, len(samples))
+    for i, v := range samples {
+        pts[i] = Vec2{f32(i) * step, height - v/maxValue*height}
+    }
+    Polyline(pts, 2, seriesColor)
+})
+```
+
+Lines are paint, not layout: they take no space, are not hit-tested, and are
+painted after the container's own background and before its children, in the
+order they were declared. They respect `Clip` (rectangular and rounded),
+`Trans`, and `Z` like the rest of the container's paint. A container that has
+no area is culled together with its lines, as it is for text, so size the
+container the lines belong to.
+
+Each segment is drawn on its own with round caps, which gives round joins.
+Where segments overlap (a join, or a path that crosses itself) a translucent
+color is composited twice and the overlap shows darker. For translucent-looking
+series, use an opaque color mixed with the background instead of an alpha below
+1.
 
 ## 15. Platform layers
 

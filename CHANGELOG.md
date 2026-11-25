@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Framework features
+
+* Added anti-aliased line shapes: `Line(p0, p1, width, color)` and `Polyline(points, width, color)` draw round-capped segments in a container's own coordinate space. Lines clip with the container and its ancestors (rectangular and rounded), follow transparency groups and Z order, and render on the Metal, GLES, WebGL, D3D11 and software renderers through a new capsule mode of the existing quad pipeline (no vertex format change). `Surface` gains `LineP0`, `LineP1` and `LineWidth`.
+
 ## v0.10.0 - 2026-11-24
 
 ### Framework features
