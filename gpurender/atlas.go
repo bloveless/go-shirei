@@ -3,8 +3,6 @@
 package gpurender
 
 import (
-	"image"
-
 	"go.hasen.dev/shirei"
 )
 
@@ -214,9 +212,12 @@ func ensureImage(id shirei.ImageId, data *shirei.ImageData) bool {
 	if m, ok := gpu.image[id]; ok && !m.external && m.gen == data.Generation && m.w == w && m.h == h {
 		return true
 	}
-	dst := scratchRGBA(w * h * 4)
-	premulImageRGBA(src, dst)
-	if !gpuImageSet(uint32(id), w, h, w*4, dst) {
+	// *image.RGBA holds premultiplied pixels (draw.Draw, LoadImage and UseImage
+	// all produce them) and the shaders sample images as premultiplied, so the
+	// pixels upload as they are. Premultiplying again would darken every
+	// translucent pixel.
+	pix := src.Pix[src.PixOffset(src.Bounds().Min.X, src.Bounds().Min.Y):]
+	if !gpuImageSet(uint32(id), w, h, src.Stride, pix) {
 		return false
 	}
 	gpu.image[id] = gpuImg{gen: data.Generation, w: w, h: h}
@@ -243,39 +244,6 @@ func bgraPremulToRGBA(src []byte, stride, w, h int, dst []byte) {
 			dst[di+2] = src[si+0]
 			dst[di+3] = src[si+3]
 			di += 4
-		}
-	}
-}
-
-func premulImageRGBA(src *image.RGBA, dst []byte) {
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	rowBytes := w * 4
-	base := src.PixOffset(b.Min.X, b.Min.Y)
-	pix := src.Pix
-	for y := 0; y < h; y++ {
-		si := base + y*src.Stride
-		di := y * rowBytes
-		srcRow := pix[si : si+rowBytes]
-		dstRow := dst[di : di+rowBytes]
-		for i := 0; i < rowBytes; i += 4 {
-			a := uint32(srcRow[i+3])
-			if a == 255 {
-				dstRow[i+0] = srcRow[i+0]
-				dstRow[i+1] = srcRow[i+1]
-				dstRow[i+2] = srcRow[i+2]
-				dstRow[i+3] = 255
-			} else if a == 0 {
-				dstRow[i+0] = 0
-				dstRow[i+1] = 0
-				dstRow[i+2] = 0
-				dstRow[i+3] = 0
-			} else {
-				dstRow[i+0] = byte(uint32(srcRow[i+0]) * a / 255)
-				dstRow[i+1] = byte(uint32(srcRow[i+1]) * a / 255)
-				dstRow[i+2] = byte(uint32(srcRow[i+2]) * a / 255)
-				dstRow[i+3] = byte(a)
-			}
 		}
 	}
 }

@@ -537,3 +537,56 @@ func testPixels(s unsafe.Pointer, w, h int) []byte {
 	}
 	return pixels
 }
+
+// Images are premultiplied (*image.RGBA from LoadImage and UseImage), and both
+// renderers must composite them the same way. This draws translucent images
+// with nonzero color over a colored background on the GPU and compares each
+// pixel with the software renderer. A second premultiply on upload darkens every
+// translucent pixel; premultiplied black, as the shadow tests use, hides that.
+func TestMetalTranslucentImageMatchesSoftware(t *testing.T) {
+	if err := Init(); err != nil {
+		t.Skipf("Metal init: %v", err)
+	}
+	// Premultiplied pixels: 50% red, and 25% opaque yellow-green.
+	fill := func(key string, px [4]byte) shirei.ImageId {
+		img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+		for i := 0; i < len(img.Pix); i += 4 {
+			copy(img.Pix[i:i+4], px[:])
+		}
+		return shirei.UseImage(key, img)
+	}
+	half := fill("gpurender-test-translucent-red", [4]byte{128, 0, 0, 128})
+	quarter := fill("gpurender-test-translucent-green", [4]byte{32, 48, 0, 64})
+	if half == 0 || quarter == 0 {
+		t.Fatal("UseImage returned 0")
+	}
+
+	blue := shirei.Vec4{220, 80, 40, 1}
+	surfaces := []shirei.Surface{
+		{Rect: shirei.Rect{Size: shirei.Vec2{32, 16}}, Color1: blue, Color2: blue},
+		{Rect: shirei.Rect{Origin: shirei.Vec2{4, 4}, Size: shirei.Vec2{8, 8}}, ImageId: half},
+		{Rect: shirei.Rect{Origin: shirei.Vec2{20, 4}, Size: shirei.Vec2{8, 8}}, ImageId: quarter},
+	}
+	const w, h = 32, 16
+	surf := testSurface(w, h)
+	if surf == nil {
+		t.Fatal("test IOSurface is nil")
+	}
+	defer testRelease(surf)
+	if err := Render(surf, w, h, 1, surfaces, nil, nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	var soft shirei.SoftRenderer
+	want := soft.Render(surfaces, nil, w, h, 1)
+	for _, at := range [][2]int{{8, 8}, {24, 8}, {1, 1}} {
+		got := testPixel(surf, at[0], at[1])
+		exp := want.Pix[at[1]*want.Stride+at[0]*4 : at[1]*want.Stride+at[0]*4+4]
+		for c := 0; c < 4; c++ {
+			d := int(got[c]) - int(exp[c])
+			if d < -2 || d > 2 {
+				t.Errorf("pixel %v: GPU BGRA=%v, software BGRA=%v", at, got, exp)
+				break
+			}
+		}
+	}
+}
