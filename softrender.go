@@ -3,6 +3,7 @@ package shirei
 import (
 	"image"
 	"image/color"
+	"math"
 	"time"
 )
 
@@ -192,6 +193,10 @@ type SoftRenderer struct {
 	regionMaskArena [][]byte
 
 	regionVerifyRaster regionRaster // scratch for SHIREI_REGION_VERIFY re-render
+
+	// lineMask is the reusable coverage buffer a line is rasterized into
+	// before it goes through maskColor (see drawLine).
+	lineMask []byte
 }
 
 // RegionCacheBytes reports the number of cached region bitmaps and their total
@@ -341,7 +346,7 @@ func (r *SoftRenderer) renderOne(s *Surface) {
 // painting it overwrites every pixel and the white clear can be skipped. Called
 // only for the backmost surface, where no clip or group transparency is in effect.
 func (r *SoftRenderer) coversViewportOpaque(s *Surface) bool {
-	if s.Stroke != 0 || s.ImageId != 0 || s.GlyphId != 0 || s.GlyphRunCount != 0 || s.Transparency != 0 {
+	if s.Stroke != 0 || s.ImageId != 0 || s.GlyphId != 0 || s.GlyphRunCount != 0 || s.Transparency != 0 || s.LineWidth > 0 {
 		return false
 	}
 	if s.Corners != (Vec4{}) || s.Color1[3] < 1 || s.Color2[3] < 1 {
@@ -360,6 +365,8 @@ func (r *SoftRenderer) visible(s *Surface) bool {
 		return false
 	}
 	switch {
+	case s.LineWidth > 0: // line: visible unless fully transparent
+		return s.Color1[3] > 0
 	case s.GlyphRunCount > 0:
 		return true
 	case s.FontId > 0 && s.GlyphId > 0: // glyph
@@ -376,6 +383,10 @@ func (r *SoftRenderer) visible(s *Surface) bool {
 }
 
 func (r *SoftRenderer) drawContent(s *Surface) {
+	if s.LineWidth > 0 {
+		r.drawLine(s)
+		return
+	}
 	if s.GlyphRunCount > 0 {
 		r.drawGlyphRun(s)
 		return
@@ -619,6 +630,54 @@ func (r *SoftRenderer) drawBorder(s *Surface) {
 // -----------------------------------------------------------------------------
 //  Glyphs & images
 // -----------------------------------------------------------------------------
+
+// drawLine rasterizes an anti-aliased capsule: per pixel, the coverage is
+// clamp(0.5 - (distance from the pixel center to the segment - half width)),
+// the same signed-distance formula the GPU fragment shaders evaluate, so both
+// paths agree on edge pixels. The coverage goes into a scratch mask over the
+// segment's device bounding box (clamped to the clip) and is then composited
+// through maskColor, which applies the clip mask and group alpha.
+func (r *SoftRenderer) drawLine(s *Surface) {
+	ox, oy := float32(r.devOrigin.X), float32(r.devOrigin.Y)
+	p0x, p0y := s.LineP0[0]*r.scale-ox, s.LineP0[1]*r.scale-oy
+	p1x, p1y := s.LineP1[0]*r.scale-ox, s.LineP1[1]*r.scale-oy
+	hw := LineHalfWidth(s.LineWidth, r.scale)
+
+	pad := hw + 1
+	bb := image.Rect(
+		int(math.Floor(float64(min(p0x, p1x)-pad))), int(math.Floor(float64(min(p0y, p1y)-pad))),
+		int(math.Ceil(float64(max(p0x, p1x)+pad))), int(math.Ceil(float64(max(p0y, p1y)+pad))))
+	area := bb.Intersect(r.clip.rect)
+	if area.Empty() {
+		return
+	}
+
+	w := area.Dx()
+	n := w * area.Dy()
+	if cap(r.lineMask) < n {
+		r.lineMask = make([]byte, n)
+	}
+	mask := r.lineMask[:n]
+
+	bax, bay := p1x-p0x, p1y-p0y
+	baa := bax*bax + bay*bay
+	for y := area.Min.Y; y < area.Max.Y; y++ {
+		row := mask[(y-area.Min.Y)*w : (y-area.Min.Y+1)*w]
+		pay := float32(y) + 0.5 - p0y
+		for x := area.Min.X; x < area.Max.X; x++ {
+			pax := float32(x) + 0.5 - p0x
+			h := float32(0)
+			if baa > 1e-12 {
+				h = min(max((pax*bax+pay*bay)/baa, 0), 1)
+			}
+			dx, dy := pax-bax*h, pay-bay*h
+			d := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+			cov := min(max(0.5-(d-hw), 0), 1)
+			row[x-area.Min.X] = byte(cov*255 + 0.5)
+		}
+	}
+	r.maskColor(area, mask, w, HSLAColor(s.Color1))
+}
 
 func (r *SoftRenderer) drawGlyphRun(s *Surface) {
 	n := int(s.GlyphRunCount)

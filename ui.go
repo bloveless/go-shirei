@@ -162,6 +162,7 @@ func swapContainerSlab() {
 			*c = _Container{
 				children:  c.children[:0],
 				wrapLines: c.wrapLines[:0],
+				lines:     c.lines[:0],
 			}
 		}
 	}
@@ -178,7 +179,7 @@ func newContainer() *_Container {
 	if s.used < len(s.items) {
 		c := s.items[s.used]
 		s.used++
-		*c = _Container{children: c.children[:0], wrapLines: c.wrapLines[:0]}
+		*c = _Container{children: c.children[:0], wrapLines: c.wrapLines[:0], lines: c.lines[:0]}
 		return c
 	}
 	c := new(_Container)

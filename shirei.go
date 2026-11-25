@@ -653,6 +653,14 @@ type Surface struct {
 	GlyphId     GlyphId
 	GlyphOffset Vec2
 
+	// Line, when LineWidth > 0, makes this surface an anti-aliased line: the
+	// stroke of width LineWidth around the segment LineP0..LineP1, drawn in
+	// Color1. Both endpoints are in the same logical space as Rect. Rect is the
+	// segment's bounding box padded by half the width plus an anti-aliasing
+	// margin; it drives culling and region hashing and nothing else.
+	LineP0, LineP1 Vec2
+	LineWidth      float32
+
 	Clip ClipStackOp
 
 	Transparency    float32
@@ -934,6 +942,9 @@ type _Container struct {
 	paintRects    []paintRect
 	textRunWidth  float32 // shaped line width; used with MainAlign to place runs
 	textRunEm     float32 // max glyph em on the line; the run surface height
+
+	// Anti-aliased line segments declared in this container (see Line).
+	lines []lineSeg
 
 	resolvedSize   Vec2
 	relativeOrigin Vec2
@@ -1927,7 +1938,7 @@ func collectFrameArtifacts(container *_Container, clipRect Rect, paint bool) {
 		// node with no text has nothing to clip. Fill is skipped when it would
 		// not paint and is not needed as a clip/transparency opener.
 		emitKids := !skipChildren && len(container.children) > 0
-		hasText := container.glyphData != nil || len(container.paintRects) > 0
+		hasText := container.glyphData != nil || len(container.paintRects) > 0 || len(container.lines) > 0
 		needClip := container.Clip && (emitKids || hasText)
 		fillVisual := container.Background[3] > 0 || container.Gradient != (Vec4{}) ||
 			container.imageId != 0 || (container.fontId > 0 && container.glyphId > 0)
@@ -1983,6 +1994,7 @@ func collectFrameArtifacts(container *_Container, clipRect Rect, paint bool) {
 		}
 
 		emitTextRuns(container)
+		emitLines(container)
 	}
 
 	if !skipOwn && !container.ClickThrough {
