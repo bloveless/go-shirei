@@ -109,6 +109,16 @@ void main() {
         }
         rgb = clamp(rgb, 0.0, 1.0);
         outc = vec4(rgb * vColor.a, vColor.a);
+    } else if (mode == 6u) {
+        // Anti-aliased line (capsule). vUV is the fragment position relative to
+        // P0 in device px, vColor2.xy is P1-P0 and vColor2.z the half stroke
+        // width. Coverage is 0.5 - signed distance, clamped: ~1 px of AA.
+        vec2 pa = vUV;
+        vec2 ba = vColor2.xy;
+        float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+        float cov = clamp(0.5 - (length(pa - ba * h) - vColor2.z), 0.0, 1.0);
+        float a = vColor.a * cov;
+        outc = vec4(vColor.rgb * a, a);
     } else {
         vec4 t = texture(tex, vUV);
         outc = t * vColor.a;

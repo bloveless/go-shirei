@@ -185,6 +185,16 @@ float4 ps_main(VSOut inn) : SV_Target {
         }
         rgb = saturate(rgb);
         outc = float4(rgb * inn.color.a, inn.color.a);
+    } else if (mode == 6) {
+        // Anti-aliased line (capsule). inn.uv is the fragment position relative
+        // to P0 in device px, inn.color2.xy is P1-P0 and inn.color2.z the half
+        // stroke width. Coverage is 0.5 - signed distance, clamped.
+        float2 pa = inn.uv;
+        float2 ba = inn.color2.xy;
+        float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-6));
+        float cov = saturate(0.5 - (length(pa - ba * h) - inn.color2.z));
+        float a = inn.color.a * cov;
+        outc = float4(inn.color.rgb * a, a);
     } else {
         float4 t = tex.Sample(samp, inn.uv);
         outc = t * inn.color.a;
@@ -627,6 +637,8 @@ func gpuSubmit(dest unsafe.Pointer, w, h int, quads []Quad, batches []Batch, upl
 		case texColorGlyph:
 			srvs[0] = d3dColorSRV
 			mode = 2
+		case texLine:
+			mode = 6
 		case texImage:
 			mode = 2
 			if im, ok := d3dImages[uint32(b.TexKey)]; ok && im.srv != 0 {

@@ -299,6 +299,8 @@ func gpuSubmit(dest unsafe.Pointer, w, h int, quads []Quad, batches []Batch, upl
 				tex = im.tex
 			}
 			mode = 2
+		case texLine:
+			mode = 6
 		}
 		gl.Call("bindTexture", glTexture2D, tex)
 		gl.Call("uniform1ui", uMode, mode)

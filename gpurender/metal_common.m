@@ -34,6 +34,7 @@ enum {
 	kTexGlyph = 1,
 	kTexColorGlyph = 2,
 	kTexImage = 3,
+	kTexLine = 4,
 };
 
 #define GLYPH_ATLAS_W 2048
@@ -124,6 +125,13 @@ static const char *kShaderSrc =
 	"        float4 c = mix(in.color, in.color2, in.corner.y);\n"
 	"        float a = c.a * cov;\n"
 	"        outc = float4(c.rgb * a, a);\n"
+	"    } else if (mode == 6) {\n"
+	"        float2 pa = in.uv;\n"
+	"        float2 ba = in.color2.xy;\n"
+	"        float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-6));\n"
+	"        float cov = saturate(0.5 - (length(pa - ba * h) - in.color2.z));\n"
+	"        float a = in.color.a * cov;\n"
+	"        outc = float4(in.color.rgb * a, a);\n"
 	"    } else {\n"
 	"        float4 t = tex.sample(samp, in.uv);\n"
 	"        outc = t * in.color.a;\n"
@@ -459,6 +467,9 @@ int metal_encode(
 		case kTexColorGlyph:
 			t = gColorAtlas;
 			mode = 2;
+			break;
+		case kTexLine:
+			mode = 6;
 			break;
 		case kTexImage: {
 			id im = [gImages objectForKey:[NSNumber numberWithUnsignedInt:(unsigned int)b.texKey]];

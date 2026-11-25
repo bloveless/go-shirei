@@ -77,6 +77,16 @@ fragment float4 fs_main(VOut in [[stage_in]],
         float4 c = mix(in.color, in.color2, in.corner.y);
         float a = c.a * cov;
         outc = float4(c.rgb * a, a);
+    } else if (mode == 6) {
+        // Anti-aliased line (capsule). in.uv is the fragment position relative to
+        // P0 in device px, in.color2.xy is P1-P0 and in.color2.z the half stroke
+        // width. Coverage is 0.5 - signed distance, clamped: ~1 px of AA.
+        float2 pa = in.uv;
+        float2 ba = in.color2.xy;
+        float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-6));
+        float cov = saturate(0.5 - (length(pa - ba * h) - in.color2.z));
+        float a = in.color.a * cov;
+        outc = float4(in.color.rgb * a, a);
     } else {
         float4 t = tex.sample(samp, in.uv);
         outc = t * in.color.a;
@@ -542,6 +552,8 @@ func metalEncode(cmd, tex, inst objc.ID, w, h int, quads []Quad, batches []Batch
 				t = im
 			}
 			scratchMode = 2
+		case texLine:
+			scratchMode = 6
 		}
 		objc2(enc, sel_setFragTex, uintptr(t), 0)
 		objc2(enc, sel_setFragSamp, uintptr(mtlSampler), 0)

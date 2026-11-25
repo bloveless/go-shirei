@@ -21,6 +21,7 @@ const (
 	texGlyph      int32 = 1
 	texColorGlyph int32 = 2
 	texImage      int32 = 3
+	texLine       int32 = 4 // anti-aliased capsule; see Quad packing in emitLine
 )
 
 type atlasSlot struct {

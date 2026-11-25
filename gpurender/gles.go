@@ -311,6 +311,8 @@ func gpuSubmit(dest unsafe.Pointer, w, h int, quads []Quad, batches []Batch, upl
 		case texColorGlyph:
 			tex = glTexColor
 			mode = 2
+		case texLine:
+			mode = 6
 		case texImage:
 			mode = 2
 			if im, ok := texImages[uint32(b.TexKey)]; ok && im.tex != 0 {

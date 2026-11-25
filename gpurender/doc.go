@@ -28,6 +28,7 @@
 //
 // SoftRenderer is the fallback and the snapshot/headless oracle.
 //
-// Draws fills, gradients, borders, glyphs, images, and rounded clips.
-// Rounded fills/borders use CPU corner-mask stamps; clip uses an SDF.
+// Draws fills, gradients, borders, glyphs, images, anti-aliased lines, and
+// rounded clips. Rounded fills/borders use CPU corner-mask stamps; clip and
+// line capsules use an SDF in the fragment shader.
 package gpurender

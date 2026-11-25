@@ -5,12 +5,13 @@ package gpurender
 import (
 	"image"
 	"image/color"
+	"math"
 
 	"go.hasen.dev/shirei"
 )
 
 // Draw list: fills, vertical gradients, borders, rect+rounded clip, group
-// alpha, glyphs, images. Rounded fills/borders use CPU corner-mask stamps
+// alpha, glyphs, images, anti-aliased lines. Rounded fills/borders use CPU corner-mask stamps
 // (same decompose as softrender). Rounded clip is an SDF in the shader.
 
 type Quad struct {
@@ -97,7 +98,7 @@ func (b *builder) build(surfaces []shirei.Surface, runs []shirei.GlyphRun, scale
 }
 
 func coversViewportOpaque(s *shirei.Surface, b *builder) bool {
-	if s.Stroke != 0 || s.ImageId != 0 || s.GlyphId != 0 || s.GlyphRunCount != 0 || s.Transparency != 0 {
+	if s.Stroke != 0 || s.ImageId != 0 || s.GlyphId != 0 || s.GlyphRunCount != 0 || s.Transparency != 0 || s.LineWidth > 0 {
 		return false
 	}
 	if s.Corners != (shirei.Vec4{}) || s.Color1[3] < 1 || s.Color2[3] < 1 {
@@ -162,6 +163,8 @@ func (b *builder) contentVisible(s *shirei.Surface) bool {
 		return false
 	}
 	switch {
+	case s.LineWidth > 0:
+		return s.Color1[3] > 0
 	case s.GlyphRunCount > 0:
 		return true
 	case s.FontId > 0 && s.GlyphId > 0:
@@ -179,6 +182,8 @@ func (b *builder) contentVisible(s *shirei.Surface) bool {
 
 func (b *builder) emit(s *shirei.Surface) {
 	switch {
+	case s.LineWidth > 0:
+		b.emitLine(s)
 	case s.GlyphRunCount > 0:
 		b.emitGlyphRun(s)
 	case s.FontId > 0 && s.GlyphId > 0:
@@ -192,6 +197,46 @@ func (b *builder) emit(s *shirei.Surface) {
 	default:
 		b.emitFill(s)
 	}
+}
+
+// emitLine emits one quad per line segment, over the segment's padded device
+// bounding box, in the texLine mode. No vertex format change is needed: the
+// fragment shader reconstructs the capsule from the interpolated values.
+//
+//	U, V      bbox origin minus P0, so the interpolated UV (U,V)+c*(UW,VH) is the
+//	          fragment's position relative to P0 in device pixels
+//	UW, VH    bbox size (so UV varies exactly with the pixel position)
+//	R,G,B,A   straight color; alpha includes the group alpha
+//	R2,G2     P1-P0 in device pixels
+//	B2        half stroke width in device pixels
+//
+// The fragment shader computes the distance to the segment minus the half
+// width and covers 0.5-d, clamped: about one device pixel of anti-aliasing.
+// Clipping (scissor and rounded SDF clips) is applied by the common epilogue.
+func (b *builder) emitLine(s *shirei.Surface) {
+	p0x, p0y := s.LineP0[0]*b.scale, s.LineP0[1]*b.scale
+	p1x, p1y := s.LineP1[0]*b.scale, s.LineP1[1]*b.scale
+	hw := shirei.LineHalfWidth(s.LineWidth, b.scale)
+	pad := float64(hw) + 1
+	bb := image.Rect(
+		int(math.Floor(float64(min(p0x, p1x))-pad)), int(math.Floor(float64(min(p0y, p1y))-pad)),
+		int(math.Ceil(float64(max(p0x, p1x))+pad)), int(math.Ceil(float64(max(p0y, p1y))+pad)))
+	if !bb.Overlaps(b.clip) {
+		return
+	}
+	c := shirei.HSLAColor(s.Color1)
+	a := float32(c.A) / 255 * b.alpha
+	if a <= 0 {
+		return
+	}
+	b.appendQuad(Quad{
+		X: float32(bb.Min.X), Y: float32(bb.Min.Y),
+		W: float32(bb.Dx()), H: float32(bb.Dy()),
+		U: float32(bb.Min.X) - p0x, V: float32(bb.Min.Y) - p0y,
+		UW: float32(bb.Dx()), VH: float32(bb.Dy()),
+		R: float32(c.R) / 255, G: float32(c.G) / 255, B: float32(c.B) / 255, A: a,
+		R2: p1x - p0x, G2: p1y - p0y, B2: hw,
+	}, texLine, 0)
 }
 
 func (b *builder) emitFill(s *shirei.Surface) {

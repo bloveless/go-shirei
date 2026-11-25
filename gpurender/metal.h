@@ -16,7 +16,7 @@ typedef struct GPUQuad {
 typedef struct GPUBatch {
 	int32_t first, count;
 	int32_t clipX, clipY, clipW, clipH;
-	int32_t texKind; // 0 fill, 1 glyph R8, 2 color-glyph RGBA, 3 image
+	int32_t texKind; // 0 fill, 1 glyph R8, 2 color-glyph RGBA, 3 image, 4 line
 	int32_t texKey;  // ImageId when texKind==3
 	int32_t clipN;   // rounded SDF clips (0 = scissor only)
 	int32_t clipGen;
