@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* Fixed translucent images drawing too dark on the GPU renderers. `UseImage` and `LoadImage` pixels are premultiplied `*image.RGBA`, which the software renderer composites correctly, but the GPU upload premultiplied them a second time. They are now uploaded as they are.
+
 ## v0.10.0 - 2026-11-24
 
 ### Framework features
