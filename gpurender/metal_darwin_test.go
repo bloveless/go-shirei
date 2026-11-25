@@ -537,3 +537,88 @@ func testPixels(s unsafe.Pointer, w, h int) []byte {
 	}
 	return pixels
 }
+
+// Lines drawn by the Metal capsule shader match the software rasterizer, at
+// both device scales: plain strokes, hairlines, sub-pixel widths, group alpha,
+// and lines under a rounded clip. The GPU rounded clip is an SDF while software
+// stamps corner masks, and the two already differ by tens of levels inside the
+// clip's corner squares for any fill, so those squares are not compared; the
+// line is checked everywhere else, and for being cut by the corner.
+func TestMetalLineMatchesSoftware(t *testing.T) {
+	if err := Init(); err != nil {
+		t.Skipf("Metal init: %v", err)
+	}
+	black := shirei.Vec4{0, 0, 0, 1}
+	blue := shirei.Vec4{220, 80, 50, 1}
+	const radius = 14
+	clip := shirei.Rect{Origin: shirei.Vec2{8, 6}, Size: shirei.Vec2{40, 36}}
+	scene := []shirei.Surface{
+		lineSurface(shirei.Vec2{3, 4}, shirei.Vec2{44, 30}, 3, black),     // diagonal
+		lineSurface(shirei.Vec2{4, 40.5}, shirei.Vec2{50, 40.5}, 1, blue), // hairline
+		lineSurface(shirei.Vec2{20, 3}, shirei.Vec2{20, 12}, 0.2, black),  // sub-pixel width
+		{Rect: shirei.Rect{Size: shirei.Vec2{56, 48}}, Transparency: 0.3},
+		lineSurface(shirei.Vec2{2, 20}, shirei.Vec2{54, 22}, 5, blue), // group alpha
+		{Rect: shirei.Rect{Size: shirei.Vec2{56, 48}}, PopTransparency: true},
+		{Rect: clip, Corners: shirei.N4(radius), Clip: shirei.ClipPush},
+		lineSurface(shirei.Vec2{0, 0}, shirei.Vec2{56, 48}, 7, blue), // through the cut corners
+		{Rect: clip, Clip: shirei.ClipPop},
+	}
+	for _, scale := range []int{1, 2} {
+		t.Run(fmt.Sprintf("scale=%d", scale), func(t *testing.T) {
+			w, h := 56*scale, 48*scale
+			target := testSurface(w, h)
+			if target == nil {
+				t.Fatal("test IOSurface is nil")
+			}
+			defer testRelease(target)
+			defer Forget(target)
+			if err := Render(target, w, h, float32(scale), scene, nil, nil, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			var soft shirei.SoftRenderer
+			fb := soft.Render(scene, nil, w, h, float32(scale))
+			got := testPixels(target, w, h)
+
+			s := float32(scale)
+			squares := []image.Rectangle{
+				image.Rect(int(8*s), int(6*s), int((8+radius)*s)+2, int((6+radius)*s)+2),
+				image.Rect(int((48-radius)*s)-2, int(6*s), int(48*s), int((6+radius)*s)+2),
+				image.Rect(int(8*s), int((42-radius)*s)-2, int((8+radius)*s)+2, int(42*s)),
+				image.Rect(int((48-radius)*s)-2, int((42-radius)*s)-2, int(48*s), int(42*s)),
+			}
+			maxDiff := 0
+			for y := 0; y < h; y++ {
+				for x := 0; x < w; x++ {
+					skip := false
+					for _, sq := range squares {
+						if image.Pt(x, y).In(sq) {
+							skip = true
+						}
+					}
+					if skip {
+						continue
+					}
+					for c := 0; c < 4; c++ {
+						d := int(got[(y*w+x)*4+c]) - int(fb.Pix[y*fb.Stride+x*4+c])
+						if d < 0 {
+							d = -d
+						}
+						maxDiff = max(maxDiff, d)
+					}
+				}
+			}
+			t.Logf("max channel diff vs software outside clip corners: %d", maxDiff)
+			if maxDiff > 3 {
+				t.Fatalf("Metal and software lines differ by up to %d levels", maxDiff)
+			}
+			// The diagonal drew; the clip's outer corner cut the thick line.
+			pix := func(x, y int) []byte { return got[(y*w+x)*4 : (y*w+x)*4+4] }
+			if on := pix(int(24*s), int(20*s)); on[0] > 120 && on[1] > 120 {
+				t.Fatalf("diagonal center BGRA=%v want dark", on)
+			}
+			if cut := pix(int(47*s), int(7*s)); cut[0] < 200 || cut[1] < 200 || cut[2] < 200 {
+				t.Fatalf("clipped corner BGRA=%v want white (line cut by the rounded clip)", cut)
+			}
+		})
+	}
+}
